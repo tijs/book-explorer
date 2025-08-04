@@ -1,0 +1,43 @@
+{
+  "tasks": {
+    "quality": "deno fmt && deno lint --fix && deno check --allow-import **/*.ts **/*.tsx",
+    "deploy": "deno task quality && vt push",
+    "check": "deno check --allow-import **/*.ts **/*.tsx",
+    "test": "deno test",
+    "fmt": "deno fmt",
+    "lint": "deno lint --fix"
+  },
+  "lock": false,
+  "compilerOptions": {
+    "noImplicitAny": false,
+    "strict": false,
+    "types": [
+      "https://www.val.town/types/valtown.d.ts"
+    ],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "dom.asynciterable",
+      "deno.ns",
+      "deno.unstable"
+    ]
+  },
+  "lint": {
+    "include": [
+      "**/*.ts",
+      "**/*.tsx"
+    ],
+    "rules": {
+      "exclude": [
+        "no-explicit-any"
+      ]
+    }
+  },
+  "node_modules_dir": false,
+  "experimental": {
+    "unstable-node-globals": true,
+    "unstable-temporal": true,
+    "unstable-worker-options": true,
+    "unstable-sloppy-imports": true
+  }
+}

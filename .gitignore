@@ -1,0 +1,8 @@
+.vscode
+.cursorrules
+.DS_Store
+node_modules
+vendor
+
+# valtown specific
+.vt
