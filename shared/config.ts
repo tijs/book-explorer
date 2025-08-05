@@ -11,6 +11,6 @@ export const APP_CONFIG = {
   APP_DESCRIPTION: "Browse and manage your Bluesky book collection",
 
   // ATProto configuration
-  ATPROTO_SERVICE: "https://bsky.social",
+  ATPROTO_SERVICE: "https://bsky.social", // Default fallback for handle resolution
   PLC_DIRECTORY: "https://plc.directory",
 } as const;

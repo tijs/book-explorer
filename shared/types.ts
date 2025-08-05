@@ -43,6 +43,7 @@ export interface AtProtoRecord {
 export interface OAuthSession {
   did: string;
   handle: string;
+  pdsUrl: string;
   accessToken: string;
   refreshToken: string;
   dpopPrivateKey: string;

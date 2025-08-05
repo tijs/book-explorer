@@ -1,6 +1,5 @@
 import { Hono } from "https://esm.sh/hono";
 import { serveFile } from "https://esm.town/v/std/utils@85-main/index.ts";
-import { Agent } from "https://esm.sh/@atproto/api";
 import { sqlite } from "https://esm.town/v/stevekrouse/sqlite";
 import {
   exportJWK,
@@ -45,6 +44,17 @@ try {
     ADD COLUMN dpop_public_key TEXT
   `);
   console.log("Added dpop_public_key column");
+} catch (_error) {
+  // Column already exists, ignore
+}
+
+// Add pds_url column
+try {
+  await sqlite.execute(`
+    ALTER TABLE ${SESSIONS_TABLE} 
+    ADD COLUMN pds_url TEXT
+  `);
+  console.log("Added pds_url column");
 } catch (_error) {
   // Column already exists, ignore
 }
@@ -197,7 +207,7 @@ async function getStoredSession(did: string): Promise<OAuthSession | null> {
   try {
     console.log(`Looking for stored session for DID: ${did}`);
     const result = await sqlite.execute(
-      `SELECT handle, access_token, refresh_token, dpop_private_key, dpop_public_key FROM ${SESSIONS_TABLE} WHERE did = ?`,
+      `SELECT handle, pds_url, access_token, refresh_token, dpop_private_key, dpop_public_key FROM ${SESSIONS_TABLE} WHERE did = ?`,
       [did],
     );
 
@@ -212,10 +222,11 @@ async function getStoredSession(did: string): Promise<OAuthSession | null> {
 
       // Val Town SQLite returns rows as arrays with indexed access
       const handle = row[0] as string;
-      const accessToken = row[1] as string;
-      const refreshToken = row[2] as string;
-      const dpopPrivateKey = row[3] as string;
-      const dpopPublicKey = row[4] as string;
+      const pdsUrl = row[1] as string;
+      const accessToken = row[2] as string;
+      const refreshToken = row[3] as string;
+      const dpopPrivateKey = row[4] as string;
+      const dpopPublicKey = row[5] as string;
 
       console.log(`Retrieved session for handle: ${handle}`);
 
@@ -228,6 +239,7 @@ async function getStoredSession(did: string): Promise<OAuthSession | null> {
       return {
         did,
         handle,
+        pdsUrl: pdsUrl || APP_CONFIG.ATPROTO_SERVICE, // Fallback for old sessions
         accessToken,
         refreshToken,
         dpopPrivateKey,
@@ -288,16 +300,41 @@ app.post("/api/auth/start", async (c) => {
   }
 
   try {
-    // Resolve handle to get the user's DID
-    const resolveResponse = await fetch(
-      `${APP_CONFIG.ATPROTO_SERVICE}/xrpc/com.atproto.identity.resolveHandle?handle=${handle}`,
-    );
+    // Try to resolve handle using multiple methods
+    let did: string | null = null;
 
-    if (!resolveResponse.ok) {
-      return c.json({ error: "Handle not found" }, 404);
+    // First, try to resolve at the domain specified in the handle
+    const handleParts = handle.split(".");
+    const potentialPDS = handleParts.length >= 2
+      ? `https://${handleParts.slice(-2).join(".")}`
+      : null;
+
+    // List of services to try for handle resolution
+    const resolutionServices = [
+      potentialPDS, // User's potential PDS based on their handle
+      APP_CONFIG.ATPROTO_SERVICE, // Fallback to bsky.social
+      "https://api.bsky.app", // Another common endpoint
+    ].filter(Boolean);
+
+    for (const service of resolutionServices) {
+      try {
+        const resolveResponse = await fetch(
+          `${service}/xrpc/com.atproto.identity.resolveHandle?handle=${handle}`,
+        );
+
+        if (resolveResponse.ok) {
+          const data = await resolveResponse.json();
+          did = data.did;
+          break;
+        }
+      } catch {
+        // Try next service
+      }
     }
 
-    const { did } = await resolveResponse.json();
+    if (!did) {
+      return c.json({ error: "Handle not found on any known service" }, 404);
+    }
 
     // Get the user's DID document to find PDS
     const didDocResponse = await fetch(`${APP_CONFIG.PLC_DIRECTORY}/${did}`);
@@ -434,7 +471,7 @@ app.get("/oauth/callback", async (c) => {
       return c.json({ error: "State expired" }, 400);
     }
 
-    const { codeVerifier, handle, did, tokenEndpoint } = stateData;
+    const { codeVerifier, handle, did, pdsEndpoint, tokenEndpoint } = stateData;
 
     console.log("Token exchange details:", {
       handle,
@@ -541,6 +578,7 @@ app.get("/oauth/callback", async (c) => {
     const sessionData: OAuthSession = {
       did,
       handle,
+      pdsUrl: pdsEndpoint,
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token,
       dpopPrivateKey: privateKeyJWK,
@@ -554,12 +592,13 @@ app.get("/oauth/callback", async (c) => {
     await sqlite.execute(
       `
       INSERT OR REPLACE INTO ${SESSIONS_TABLE} 
-      (did, handle, access_token, refresh_token, dpop_private_key, dpop_public_key, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      (did, handle, pds_url, access_token, refresh_token, dpop_private_key, dpop_public_key, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       [
         did,
         handle,
+        pdsEndpoint,
         sessionData.accessToken,
         sessionData.refreshToken,
         sessionData.dpopPrivateKey,
@@ -594,17 +633,12 @@ app.get("/api/books", async (c) => {
   }
 
   try {
-    // Parse session data to get user handle
+    // Parse session data to get user info
     const session = JSON.parse(atob(sessionData));
-    const handle = session.handle;
+    const { did, pdsUrl } = session;
 
-    // First resolve handle to DID using unauthenticated agent
-    const agent = new Agent({
-      service: APP_CONFIG.ATPROTO_SERVICE,
-    });
-
-    const profile = await agent.resolveHandle({ handle });
-    const did = profile.data.did;
+    // Use the user's PDS URL from session
+    const userPDS = pdsUrl || APP_CONFIG.ATPROTO_SERVICE;
 
     // Prepare headers for authenticated request
     const headers: HeadersInit = {
@@ -613,12 +647,11 @@ app.get("/api/books", async (c) => {
 
     if (sessionData) {
       try {
-        const session = JSON.parse(atob(sessionData));
         const storedSession = await sqlite.execute(
           `
           SELECT access_token FROM ${SESSIONS_TABLE} WHERE did = ?
         `,
-          [session.did],
+          [did],
         );
 
         if (storedSession.rows && storedSession.rows.length > 0) {
@@ -636,7 +669,7 @@ app.get("/api/books", async (c) => {
 
       do {
         const url = new URL(
-          `${APP_CONFIG.ATPROTO_SERVICE}/xrpc/com.atproto.repo.listRecords`,
+          `${userPDS}/xrpc/com.atproto.repo.listRecords`,
         );
         url.searchParams.set("repo", did);
         url.searchParams.set("collection", "buzz.bookhive.book");
