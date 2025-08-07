@@ -26,6 +26,8 @@ export function App() {
   const [showBulkActions, setShowBulkActions] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [statusFilter, setStatusFilter] = useState<BookStatus | null>(null);
+  const [currentView, setCurrentView] = useState<"books" | "tools">("books");
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
 
   const BOOKS_PER_PAGE = 50;
 
@@ -78,9 +80,9 @@ export function App() {
         const sessionData = JSON.parse(atob(sessionParam));
         setSession(sessionData);
         // Clean up URL
-        globalThis.history.replaceState(
+        (globalThis as any).history.replaceState(
           {},
-          document.title,
+          (globalThis as any).document?.title || "Book Explorer",
           globalThis.location.pathname,
         );
       } catch {
@@ -313,86 +315,143 @@ export function App() {
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
             📚 Book Explorer
           </h1>
-          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-            <span className="text-sm text-gray-600">
-              Logged in as: {session.handle}
-            </span>
+          <div className="relative">
             <button
               type="button"
-              onClick={handleLogout}
-              className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 self-start sm:self-auto"
+              onClick={() => setShowUserDropdown(!showUserDropdown)}
+              className="flex items-center gap-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
             >
-              Logout
+              <span>Logged in as: {session.handle}</span>
+              <svg
+                className={`w-4 h-4 transition-transform ${
+                  showUserDropdown ? "rotate-180" : ""
+                }`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 9l-7 7-7-7"
+                />
+              </svg>
             </button>
+            {showUserDropdown && (
+              <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-10">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentView("books");
+                    setShowUserDropdown(false);
+                  }}
+                  className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-100 ${
+                    currentView === "books" ? "bg-gray-50 font-medium" : ""
+                  }`}
+                >
+                  📚 My Books
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentView("tools");
+                    setShowUserDropdown(false);
+                  }}
+                  className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-100 ${
+                    currentView === "tools" ? "bg-gray-50 font-medium" : ""
+                  }`}
+                >
+                  🔧 Tools
+                </button>
+                <div className="border-t border-gray-200 my-1"></div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleLogout();
+                    setShowUserDropdown(false);
+                  }}
+                  className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50"
+                >
+                  Logout
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
-        {error && (
-          <div className="mb-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
-            {error}
-          </div>
-        )}
+        {currentView === "tools"
+          ? <ToolsView session={session} showToast={showToast} />
+          : (
+            <>
+              {error && (
+                <div className="mb-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
+                  {error}
+                </div>
+              )}
 
-        {books.length > 0 && (
-          <div>
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
-              <h2 className="text-xl sm:text-2xl font-semibold text-gray-800">
-                My Books ({statusFilter
-                  ? `${filteredBooks.length} of ${books.length}`
-                  : books.length})
-              </h2>
-              <div className="text-sm text-gray-600">
-                Page {currentPage + 1} of {totalPages} • Showing{" "}
-                {paginatedBooks.length} books
-                {statusFilter &&
-                  ` (filtered by ${STATUS_LABELS[statusFilter]})`}
-              </div>
-            </div>
+              {books.length > 0 && (
+                <div>
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
+                    <h2 className="text-xl sm:text-2xl font-semibold text-gray-800">
+                      My Books ({statusFilter
+                        ? `${filteredBooks.length} of ${books.length}`
+                        : books.length})
+                    </h2>
+                    <div className="text-sm text-gray-600">
+                      Page {currentPage + 1} of {totalPages} • Showing{" "}
+                      {paginatedBooks.length} books
+                      {statusFilter &&
+                        ` (filtered by ${STATUS_LABELS[statusFilter]})`}
+                    </div>
+                  </div>
 
-            <BookFilter
-              currentFilter={statusFilter}
-              onFilterChange={handleStatusFilterChange}
-            />
+                  <BookFilter
+                    currentFilter={statusFilter}
+                    onFilterChange={handleStatusFilterChange}
+                  />
 
-            {showBulkActions && (
-              <BulkActions
-                selectedCount={selectedBooks.size}
-                onStatusUpdate={updateBulkStatus}
-                onClearSelection={clearSelection}
-              />
-            )}
+                  {showBulkActions && (
+                    <BulkActions
+                      selectedCount={selectedBooks.size}
+                      onStatusUpdate={updateBulkStatus}
+                      onClearSelection={clearSelection}
+                    />
+                  )}
 
-            <BooksTable
-              books={paginatedBooks}
-              selectedBooks={selectedBooks}
-              onToggleSelection={toggleBookSelection}
-              onSelectAll={selectAllBooks}
-              onClearSelection={clearSelection}
-              onStatusUpdate={updateBookStatus}
-            />
+                  <BooksTable
+                    books={paginatedBooks}
+                    selectedBooks={selectedBooks}
+                    onToggleSelection={toggleBookSelection}
+                    onSelectAll={selectAllBooks}
+                    onClearSelection={clearSelection}
+                    onStatusUpdate={updateBookStatus}
+                  />
 
-            {totalPages > 1 && (
-              <Pagination
-                currentPage={currentPage}
-                totalPages={totalPages}
-                onPageChange={goToPage}
-              />
-            )}
-          </div>
-        )}
+                  {totalPages > 1 && (
+                    <Pagination
+                      currentPage={currentPage}
+                      totalPages={totalPages}
+                      onPageChange={goToPage}
+                    />
+                  )}
+                </div>
+              )}
 
-        {!loading && books.length === 0 && (
-          <div className="text-center py-12 text-gray-500">
-            <div className="text-6xl mb-4">📚</div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">
-              No books found
-            </h3>
-            <p>
-              Your book collection will appear here once you add some books to
-              your Bluesky profile.
-            </p>
-          </div>
-        )}
+              {!loading && books.length === 0 && (
+                <div className="text-center py-12 text-gray-500">
+                  <div className="text-6xl mb-4">📚</div>
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">
+                    No books found
+                  </h3>
+                  <p>
+                    Your book collection will appear here once you add some
+                    books to your Bluesky profile.
+                  </p>
+                </div>
+              )}
+            </>
+          )}
       </div>
 
       {/* Toast Container */}
@@ -466,7 +525,7 @@ function BooksTable({
                   type="checkbox"
                   checked={allSelected}
                   ref={(input) => {
-                    if (input) input.indeterminate = someSelected;
+                    if (input) (input as any).indeterminate = someSelected;
                   }}
                   onChange={handleSelectAll}
                   className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
@@ -601,8 +660,10 @@ function BookRow({
         <div className="flex items-center gap-2">
           <select
             value={currentStatus}
-            onChange={(e) =>
-              onStatusUpdate(record.uri, e.target.value as BookStatus)}
+            onChange={(e) => {
+              const target = e.target as HTMLSelectElement;
+              onStatusUpdate(record.uri, target.value as BookStatus);
+            }}
             className="text-xs border border-gray-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
           >
             {statusOptions.map((status) => (
@@ -856,8 +917,10 @@ function BookFilter({ currentFilter, onFilterChange }: BookFilterProps) {
           <select
             id="status-filter"
             value={currentFilter || ""}
-            onChange={(e) =>
-              onFilterChange(e.target.value as BookStatus || null)}
+            onChange={(e) => {
+              const target = e.target as HTMLSelectElement;
+              onFilterChange(target.value as BookStatus || null);
+            }}
             className="border border-gray-300 rounded-md px-3 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           >
             <option value="">All Books</option>
@@ -892,6 +955,367 @@ function BookFilter({ currentFilter, onFilterChange }: BookFilterProps) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+interface ToolsViewProps {
+  session: OAuthSession;
+  showToast: (type: Toast["type"], message: string) => void;
+}
+
+function ToolsView({ session, showToast }: ToolsViewProps) {
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [processing, setProcessing] = useState(false);
+  const [processingStatus, setProcessingStatus] = useState<string>("");
+  const [results, setResults] = useState<
+    {
+      total: number;
+      updated: number;
+      failed: number;
+      books: Array<{ title: string; status: string; success: boolean }>;
+    } | null
+  >(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const target = e.target as HTMLInputElement;
+    if (target.files && target.files[0]) {
+      setCsvFile(target.files[0]);
+      setResults(null);
+    }
+  };
+
+  const parseCsvFile = async (file: File): Promise<any[]> => {
+    const text = await file.text();
+    const lines = text.split("\n");
+    const headers = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""));
+
+    const records = [];
+    for (let i = 1; i < lines.length; i++) {
+      if (!lines[i].trim()) continue;
+
+      // Parse CSV line handling quoted values
+      const values: string[] = [];
+      let current = "";
+      let inQuotes = false;
+
+      for (let j = 0; j < lines[i].length; j++) {
+        const char = lines[i][j];
+        if (char === '"') {
+          inQuotes = !inQuotes;
+        } else if (char === "," && !inQuotes) {
+          values.push(current.trim());
+          current = "";
+        } else {
+          current += char;
+        }
+      }
+      values.push(current.trim());
+
+      const record: any = {};
+      headers.forEach((header, index) => {
+        record[header] = values[index] || "";
+      });
+      records.push(record);
+    }
+
+    return records;
+  };
+
+  const processImport = async () => {
+    if (!csvFile) {
+      showToast("error", "Please select a CSV file first");
+      return;
+    }
+
+    setProcessing(true);
+    setProcessingStatus("Parsing CSV file...");
+
+    try {
+      // Parse CSV
+      const csvRecords = await parseCsvFile(csvFile);
+
+      // Filter for books with "to-read" status
+      const toReadBooks = csvRecords.filter(
+        (record) => record["Read Status"] === "to-read",
+      );
+
+      if (toReadBooks.length === 0) {
+        showToast("info", "No books with 'to-read' status found in the CSV");
+        setProcessing(false);
+        return;
+      }
+
+      setProcessingStatus(
+        `Found ${toReadBooks.length} books to update. Fetching your AT Protocol books...`,
+      );
+
+      // Fetch current books from AT Protocol
+      const response = await fetch("/api/books", {
+        headers: {
+          "X-Session-Data": btoa(JSON.stringify(session)),
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch your books");
+      }
+
+      const { books } = await response.json();
+
+      // Match books by title and find those with "wantToRead" status
+      const booksToUpdate = [];
+      for (const csvBook of toReadBooks) {
+        const csvTitle = csvBook.Title.toLowerCase().trim();
+        const atProtoBook = books.find((b: AtProtoRecord) => {
+          const bookTitle = b.value.title.toLowerCase().trim();
+          return (
+            bookTitle === csvTitle &&
+            b.value.status === "buzz.bookhive.defs#wantToRead"
+          );
+        });
+
+        if (atProtoBook) {
+          booksToUpdate.push({
+            uri: atProtoBook.uri,
+            title: atProtoBook.value.title,
+            csvTitle: csvBook.Title,
+          });
+        }
+      }
+
+      if (booksToUpdate.length === 0) {
+        showToast(
+          "info",
+          "No matching books found with 'Want to Read' status in your AT Protocol records",
+        );
+        setProcessing(false);
+        return;
+      }
+
+      setProcessingStatus(
+        `Updating ${booksToUpdate.length} books to 'Finished' status...`,
+      );
+
+      // Update each book
+      const updateResults = [];
+      let successCount = 0;
+      let failCount = 0;
+
+      for (const book of booksToUpdate) {
+        try {
+          const updateResponse = await fetch(
+            `/api/books/${encodeURIComponent(book.uri)}/status`,
+            {
+              method: "PUT",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Session-Data": btoa(JSON.stringify(session)),
+              },
+              body: JSON.stringify({ status: "buzz.bookhive.defs#finished" }),
+            },
+          );
+
+          if (updateResponse.ok) {
+            successCount++;
+            updateResults.push({
+              title: book.title,
+              status: "Updated to Finished",
+              success: true,
+            });
+          } else {
+            failCount++;
+            updateResults.push({
+              title: book.title,
+              status: "Failed to update",
+              success: false,
+            });
+          }
+        } catch {
+          failCount++;
+          updateResults.push({
+            title: book.title,
+            status: "Network error",
+            success: false,
+          });
+        }
+
+        setProcessingStatus(
+          `Processing: ${successCount + failCount} of ${booksToUpdate.length}`,
+        );
+      }
+
+      setResults({
+        total: booksToUpdate.length,
+        updated: successCount,
+        failed: failCount,
+        books: updateResults,
+      });
+
+      if (successCount > 0) {
+        showToast(
+          "success",
+          `Successfully updated ${successCount} book${
+            successCount === 1 ? "" : "s"
+          } to Finished status`,
+        );
+      }
+
+      if (failCount > 0) {
+        showToast(
+          "error",
+          `Failed to update ${failCount} book${failCount === 1 ? "" : "s"}`,
+        );
+      }
+    } catch (error) {
+      showToast(
+        "error",
+        `Import failed: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
+      );
+    } finally {
+      setProcessing(false);
+      setProcessingStatus("");
+    }
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto">
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+        <h2 className="text-xl font-semibold text-gray-900 mb-4">
+          📚 StoryGraph Import Tool
+        </h2>
+        <div className="prose prose-sm text-gray-600 mb-6">
+          <p>
+            This tool allows you to sync your StoryGraph reading status with
+            your AT Protocol book records. It will:
+          </p>
+          <ol className="list-decimal list-inside space-y-1">
+            <li>Parse your StoryGraph export CSV file</li>
+            <li>Find books with "to-read" status in the CSV</li>
+            <li>
+              Match them with books in your AT Protocol records that have "Want
+              to Read" status
+            </li>
+            <li>Update those matched books to "Finished" status</li>
+          </ol>
+          <p className="mt-3">
+            This is useful if you've been tracking your reading in StoryGraph
+            and want to update your Bluesky/AT Protocol book statuses
+            accordingly.
+          </p>
+        </div>
+
+        <div className="space-y-4">
+          <div>
+            <label
+              htmlFor="csv-upload"
+              className="block text-sm font-medium text-gray-700 mb-2"
+            >
+              Upload StoryGraph Export CSV
+            </label>
+            <input
+              id="csv-upload"
+              type="file"
+              accept=".csv"
+              onChange={handleFileChange}
+              className="block w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 p-2"
+              disabled={processing}
+            />
+            {csvFile && (
+              <p className="mt-2 text-sm text-gray-600">
+                Selected: {csvFile.name}
+              </p>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={processImport}
+            disabled={!csvFile || processing}
+            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+          >
+            {processing ? "Processing..." : "Import and Update Books"}
+          </button>
+
+          {processingStatus && (
+            <div className="p-3 bg-blue-50 text-blue-700 rounded-lg text-sm">
+              {processingStatus}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {results && (
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">
+            Import Results
+          </h3>
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="text-center p-3 bg-gray-50 rounded-lg">
+              <div className="text-2xl font-bold text-gray-900">
+                {results.total}
+              </div>
+              <div className="text-sm text-gray-600">Total Books</div>
+            </div>
+            <div className="text-center p-3 bg-green-50 rounded-lg">
+              <div className="text-2xl font-bold text-green-700">
+                {results.updated}
+              </div>
+              <div className="text-sm text-green-600">Updated</div>
+            </div>
+            <div className="text-center p-3 bg-red-50 rounded-lg">
+              <div className="text-2xl font-bold text-red-700">
+                {results.failed}
+              </div>
+              <div className="text-sm text-red-600">Failed</div>
+            </div>
+          </div>
+
+          {results.books.length > 0 && (
+            <div>
+              <h4 className="text-sm font-medium text-gray-700 mb-2">
+                Processed Books:
+              </h4>
+              <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Title
+                      </th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Status
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {results.books.map((book, index) => (
+                      <tr key={index}>
+                        <td className="px-3 py-2 text-sm text-gray-900">
+                          {book.title}
+                        </td>
+                        <td className="px-3 py-2 text-sm">
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs font-medium ${
+                              book.success
+                                ? "bg-green-100 text-green-800"
+                                : "bg-red-100 text-red-800"
+                            }`}
+                          >
+                            {book.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

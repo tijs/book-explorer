@@ -106,13 +106,14 @@ async function generateDPoPProofWithKeys(
   return { dpopProof };
 }
 
-// Helper function to make DPoP authenticated request with nonce retry
+// Helper function to make DPoP authenticated request with nonce retry and token refresh
 async function makeDPoPRequest(
   method: string,
   url: string,
   session: OAuthSession,
   body?: string,
-) {
+  retryWithRefresh = true,
+): Promise<{ response: Response; session: OAuthSession }> {
   // Import the stored DPoP keys
   const privateKeyJWK = JSON.parse(session.dpopPrivateKey);
   const publicKeyJWK = JSON.parse(session.dpopPublicKey);
@@ -143,6 +144,24 @@ async function makeDPoPRequest(
   if (!response.ok && response.status === 401) {
     try {
       const errorData = await response.json();
+
+      // Check if token is expired
+      if (errorData.error === "invalid_token" && retryWithRefresh) {
+        console.log("Token expired, attempting to refresh...");
+
+        // Try to refresh the token
+        const refreshedSession = await refreshOAuthToken(session);
+        if (refreshedSession) {
+          console.log("Token refreshed successfully, retrying request...");
+          // Retry the request with the new token (but don't retry refresh again)
+          return makeDPoPRequest(method, url, refreshedSession, body, false);
+        } else {
+          console.error("Failed to refresh token");
+          // Return the original 401 response
+          return { response, session };
+        }
+      }
+
       if (errorData.error === "use_dpop_nonce") {
         // Extract nonce from DPoP-Nonce header
         const nonce = response.headers.get("DPoP-Nonce");
@@ -168,6 +187,38 @@ async function makeDPoPRequest(
             headers: retriedHeaders,
             body,
           });
+
+          // Check if the nonce retry also failed due to expired token
+          if (!response.ok && response.status === 401 && retryWithRefresh) {
+            try {
+              const retryErrorData = await response.json();
+              if (retryErrorData.error === "invalid_token") {
+                console.log(
+                  "Token expired after nonce retry, attempting to refresh...",
+                );
+
+                // Try to refresh the token
+                const refreshedSession = await refreshOAuthToken(session);
+                if (refreshedSession) {
+                  console.log(
+                    "Token refreshed successfully, retrying request with fresh token...",
+                  );
+                  // Retry the request with the new token (but don't retry refresh again)
+                  return makeDPoPRequest(
+                    method,
+                    url,
+                    refreshedSession,
+                    body,
+                    false,
+                  );
+                } else {
+                  console.error("Failed to refresh token after nonce retry");
+                }
+              }
+            } catch {
+              // If parsing fails, continue to return response
+            }
+          }
         }
       }
     } catch {
@@ -175,7 +226,7 @@ async function makeDPoPRequest(
     }
   }
 
-  return response;
+  return { response, session };
 }
 
 // Generate PKCE code verifier and challenge
@@ -251,6 +302,176 @@ async function getStoredSession(did: string): Promise<OAuthSession | null> {
     return null;
   } catch (error) {
     console.error("Failed to get stored session:", error);
+    return null;
+  }
+}
+
+// Refresh OAuth token when expired
+async function refreshOAuthToken(
+  session: OAuthSession,
+): Promise<OAuthSession | null> {
+  try {
+    console.log(`Refreshing OAuth token for ${session.handle}`);
+
+    // Get the user's token endpoint from their PDS
+    const didDocResponse = await fetch(
+      `${APP_CONFIG.PLC_DIRECTORY}/${session.did}`,
+    );
+    if (!didDocResponse.ok) {
+      console.error("Failed to get DID document for token refresh");
+      return null;
+    }
+
+    const didDoc = await didDocResponse.json();
+    const pdsEndpoint = didDoc.service?.find((s: any) =>
+      s.id === "#atproto_pds"
+    )?.serviceEndpoint;
+
+    if (!pdsEndpoint) {
+      console.error("Could not find PDS endpoint for token refresh");
+      return null;
+    }
+
+    // Discover OAuth protected resource metadata
+    const resourceMetadataResponse = await fetch(
+      `${pdsEndpoint}/.well-known/oauth-protected-resource`,
+    );
+
+    if (!resourceMetadataResponse.ok) {
+      console.error("Failed to get OAuth metadata for token refresh");
+      return null;
+    }
+
+    const resourceMetadata = await resourceMetadataResponse.json();
+    const authServerUrl = resourceMetadata.authorization_servers?.[0];
+
+    if (!authServerUrl) {
+      console.error("No authorization server found for token refresh");
+      return null;
+    }
+
+    // Get token endpoint
+    const authServerMetadataResponse = await fetch(
+      `${authServerUrl}/.well-known/oauth-authorization-server`,
+    );
+
+    if (!authServerMetadataResponse.ok) {
+      console.error("Failed to get auth server metadata for token refresh");
+      return null;
+    }
+
+    const authServerMetadata = await authServerMetadataResponse.json();
+    const tokenEndpoint = authServerMetadata.token_endpoint;
+
+    if (!tokenEndpoint) {
+      console.error("No token endpoint found for refresh");
+      return null;
+    }
+
+    // Import the stored DPoP keys
+    const privateKeyJWK = JSON.parse(session.dpopPrivateKey);
+    const publicKeyJWK = JSON.parse(session.dpopPublicKey);
+    const privateKey = await importJWK(privateKeyJWK, "ES256") as CryptoKey;
+    const publicKey = await importJWK(publicKeyJWK, "ES256") as CryptoKey;
+
+    // Prepare refresh token request
+    const requestBody = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: session.refreshToken,
+      client_id: APP_CONFIG.CLIENT_ID,
+    });
+
+    // First attempt - without nonce
+    const { dpopProof } = await generateDPoPProofWithKeys(
+      "POST",
+      tokenEndpoint,
+      privateKey,
+      publicKey,
+    );
+
+    let tokenResponse = await fetch(tokenEndpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "DPoP": dpopProof,
+      },
+      body: requestBody,
+    });
+
+    // Handle nonce requirement
+    if (!tokenResponse.ok && tokenResponse.status === 400) {
+      try {
+        const errorData = await tokenResponse.json();
+        if (errorData.error === "use_dpop_nonce") {
+          const nonce = tokenResponse.headers.get("DPoP-Nonce");
+          if (nonce) {
+            console.log("Retrying token refresh with DPoP nonce");
+
+            const { dpopProof: dpopProofWithNonce } =
+              await generateDPoPProofWithKeys(
+                "POST",
+                tokenEndpoint,
+                privateKey,
+                publicKey,
+                undefined,
+                nonce,
+              );
+            tokenResponse = await fetch(tokenEndpoint, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "DPoP": dpopProofWithNonce,
+              },
+              body: requestBody,
+            });
+          }
+        }
+      } catch {
+        // Continue to general error handling
+      }
+    }
+
+    if (!tokenResponse.ok) {
+      const errorText = await tokenResponse.text();
+      console.error("Token refresh failed:", {
+        status: tokenResponse.status,
+        statusText: tokenResponse.statusText,
+        body: errorText,
+      });
+      return null;
+    }
+
+    const tokens = await tokenResponse.json();
+    console.log("Successfully refreshed OAuth token");
+
+    // Update session with new tokens
+    const updatedSession: OAuthSession = {
+      ...session,
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token || session.refreshToken, // Keep old refresh token if not provided
+    };
+
+    // Store updated session in database
+    const now = Date.now();
+    await sqlite.execute(
+      `
+      UPDATE ${SESSIONS_TABLE}
+      SET access_token = ?, refresh_token = ?, updated_at = ?
+      WHERE did = ?
+    `,
+      [
+        updatedSession.accessToken,
+        updatedSession.refreshToken,
+        now,
+        session.did,
+      ],
+    );
+
+    console.log(`Updated session in database for ${session.handle}`);
+
+    return updatedSession;
+  } catch (error) {
+    console.error("Token refresh error:", error);
     return null;
   }
 }
@@ -776,11 +997,13 @@ app.put("/api/books/:uri/status", async (c) => {
       // Get the current record using DPoP authenticated request
       const getUrl =
         `${pdsEndpoint}/xrpc/com.atproto.repo.getRecord?repo=${repo}&collection=${collection}&rkey=${rkey}`;
-      const getResponse = await makeDPoPRequest(
+      const getResult = await makeDPoPRequest(
         "GET",
         getUrl,
         storedSession,
       );
+      const getResponse = getResult.response;
+      let currentSession = getResult.session;
 
       if (!getResponse.ok) {
         const errorText = await getResponse.text();
@@ -804,10 +1027,10 @@ app.put("/api/books/:uri/status", async (c) => {
       };
 
       // Update the record using DPoP authenticated request
-      const updateResponse = await makeDPoPRequest(
+      const updateResult = await makeDPoPRequest(
         "POST",
         `${pdsEndpoint}/xrpc/com.atproto.repo.putRecord`,
-        storedSession,
+        currentSession,
         JSON.stringify({
           repo,
           collection,
@@ -816,6 +1039,8 @@ app.put("/api/books/:uri/status", async (c) => {
           swapRecord: currentRecord.cid,
         }),
       );
+      const updateResponse = updateResult.response;
+      currentSession = updateResult.session;
 
       if (!updateResponse.ok) {
         const errorText = await updateResponse.text();
