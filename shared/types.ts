@@ -46,8 +46,6 @@ export interface OAuthSession {
   pdsUrl: string;
   accessToken: string;
   refreshToken: string;
-  dpopPrivateKey: string;
-  dpopPublicKey: string;
 }
 
 export interface OAuthState {
