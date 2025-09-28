@@ -5,7 +5,7 @@ export function Login() {
   const [error, setError] = useState<string | null>(null);
   const [handle, setHandle] = useState("");
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
@@ -17,23 +17,13 @@ export function Login() {
     }
 
     try {
-      const response = await fetch("/api/auth/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ handle: handle.trim() }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        // Redirect to OAuth authorization URL
-        globalThis.location.href = data.authUrl;
-      } else {
-        setError(data.error || "Failed to start OAuth flow");
-      }
-    } catch (_err) {
-      setError("Network error occurred");
-    } finally {
+      // Direct redirect to OAuth package's login endpoint with handle parameter
+      globalThis.location.href = `/login?handle=${
+        encodeURIComponent(handle.trim())
+      }`;
+    } catch (error) {
+      console.error("Login failed:", error);
+      setError("Failed to start login process");
       setLoading(false);
     }
   };

@@ -68,44 +68,33 @@ export function App() {
     console.groupEnd();
   };
 
-  // Load session from localStorage or URL on mount
+  // Check authentication status on mount
   useEffect(() => {
-    // Check for OAuth callback in URL
-    const urlParams = new URLSearchParams(globalThis.location.search);
-    const sessionParam = urlParams.get("session");
-
-    if (sessionParam) {
-      // OAuth callback with session data
+    const checkAuth = async () => {
       try {
-        const sessionData = JSON.parse(atob(sessionParam));
-        setSession(sessionData);
-        // Clean up URL
-        (globalThis as any).history.replaceState(
-          {},
-          (globalThis as any).document?.title || "Book Explorer",
-          globalThis.location.pathname,
-        );
-      } catch {
-        // Invalid session data
+        const response = await fetch("/api/auth/session");
+        const data = await response.json();
+        if (data.valid && data.did) {
+          setSession({
+            did: data.did,
+            handle: data.handle || "",
+            accessToken: "", // Not needed for cookie-based auth
+            refreshToken: "", // Not needed for cookie-based auth
+            pdsUrl: data.pdsUrl || "",
+          });
+        } else {
+          setSession(null);
+        }
+      } catch (error) {
+        console.error("Failed to check auth status:", error);
+        setSession(null);
       }
-    } else {
-      // Check localStorage for existing session
-      const storedSession = localStorage.getItem("oauthSession");
-      if (storedSession) {
-        const sessionData = JSON.parse(storedSession);
-        setSession(sessionData);
-      }
-    }
+    };
+
+    checkAuth();
   }, []);
 
-  // Save session to localStorage when it changes
-  useEffect(() => {
-    if (session) {
-      localStorage.setItem("oauthSession", JSON.stringify(session));
-    } else {
-      localStorage.removeItem("oauthSession");
-    }
-  }, [session]);
+  // No need to manage localStorage with cookie-based auth
 
   const handleLogout = () => {
     setSession(null);
@@ -123,12 +112,10 @@ export function App() {
     logRequest("GET", url);
 
     try {
-      const headers: HeadersInit = {};
-      if (session) {
-        headers["X-Session-Data"] = btoa(JSON.stringify(session));
-      }
-
-      const response = await fetch(url, { headers });
+      // With cookie-based auth, no need for custom headers
+      const response = await fetch(url, {
+        credentials: "include", // Include cookies for authentication
+      });
       const data = await response.json();
 
       logResponse("GET", url, response, data);
@@ -169,8 +156,8 @@ export function App() {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          "X-Session-Data": btoa(JSON.stringify(session)),
         },
+        credentials: "include", // Include cookies for authentication
         body: JSON.stringify(requestData),
       });
 
@@ -380,78 +367,76 @@ export function App() {
           </div>
         </div>
 
-        {currentView === "tools"
-          ? <ToolsView session={session} showToast={showToast} />
-          : (
-            <>
-              {error && (
-                <div className="mb-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
-                  {error}
-                </div>
-              )}
+        {currentView === "tools" ? <ToolsView showToast={showToast} /> : (
+          <>
+            {error && (
+              <div className="mb-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg">
+                {error}
+              </div>
+            )}
 
-              {books.length > 0 && (
-                <div>
-                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
-                    <h2 className="text-xl sm:text-2xl font-semibold text-gray-800">
-                      My Books ({statusFilter
-                        ? `${filteredBooks.length} of ${books.length}`
-                        : books.length})
-                    </h2>
-                    <div className="text-sm text-gray-600">
-                      Page {currentPage + 1} of {totalPages} • Showing{" "}
-                      {paginatedBooks.length} books
-                      {statusFilter &&
-                        ` (filtered by ${STATUS_LABELS[statusFilter]})`}
-                    </div>
+            {books.length > 0 && (
+              <div>
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
+                  <h2 className="text-xl sm:text-2xl font-semibold text-gray-800">
+                    My Books ({statusFilter
+                      ? `${filteredBooks.length} of ${books.length}`
+                      : books.length})
+                  </h2>
+                  <div className="text-sm text-gray-600">
+                    Page {currentPage + 1} of {totalPages} • Showing{" "}
+                    {paginatedBooks.length} books
+                    {statusFilter &&
+                      ` (filtered by ${STATUS_LABELS[statusFilter]})`}
                   </div>
+                </div>
 
-                  <BookFilter
-                    currentFilter={statusFilter}
-                    onFilterChange={handleStatusFilterChange}
-                  />
+                <BookFilter
+                  currentFilter={statusFilter}
+                  onFilterChange={handleStatusFilterChange}
+                />
 
-                  {showBulkActions && (
-                    <BulkActions
-                      selectedCount={selectedBooks.size}
-                      onStatusUpdate={updateBulkStatus}
-                      onClearSelection={clearSelection}
-                    />
-                  )}
-
-                  <BooksTable
-                    books={paginatedBooks}
-                    selectedBooks={selectedBooks}
-                    onToggleSelection={toggleBookSelection}
-                    onSelectAll={selectAllBooks}
+                {showBulkActions && (
+                  <BulkActions
+                    selectedCount={selectedBooks.size}
+                    onStatusUpdate={updateBulkStatus}
                     onClearSelection={clearSelection}
-                    onStatusUpdate={updateBookStatus}
                   />
+                )}
 
-                  {totalPages > 1 && (
-                    <Pagination
-                      currentPage={currentPage}
-                      totalPages={totalPages}
-                      onPageChange={goToPage}
-                    />
-                  )}
-                </div>
-              )}
+                <BooksTable
+                  books={paginatedBooks}
+                  selectedBooks={selectedBooks}
+                  onToggleSelection={toggleBookSelection}
+                  onSelectAll={selectAllBooks}
+                  onClearSelection={clearSelection}
+                  onStatusUpdate={updateBookStatus}
+                />
 
-              {!loading && books.length === 0 && (
-                <div className="text-center py-12 text-gray-500">
-                  <div className="text-6xl mb-4">📚</div>
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">
-                    No books found
-                  </h3>
-                  <p>
-                    Your book collection will appear here once you add some
-                    books to your Bluesky profile.
-                  </p>
-                </div>
-              )}
-            </>
-          )}
+                {totalPages > 1 && (
+                  <Pagination
+                    currentPage={currentPage}
+                    totalPages={totalPages}
+                    onPageChange={goToPage}
+                  />
+                )}
+              </div>
+            )}
+
+            {!loading && books.length === 0 && (
+              <div className="text-center py-12 text-gray-500">
+                <div className="text-6xl mb-4">📚</div>
+                <h3 className="text-lg font-medium text-gray-900 mb-2">
+                  No books found
+                </h3>
+                <p>
+                  Your book collection will appear here once you add some books
+                  to your Bluesky profile.
+                </p>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       {/* Toast Container */}
@@ -960,11 +945,10 @@ function BookFilter({ currentFilter, onFilterChange }: BookFilterProps) {
 }
 
 interface ToolsViewProps {
-  session: OAuthSession;
   showToast: (type: Toast["type"], message: string) => void;
 }
 
-function ToolsView({ session, showToast }: ToolsViewProps) {
+function ToolsView({ showToast }: ToolsViewProps) {
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [processing, setProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState<string>("");
@@ -1052,9 +1036,7 @@ function ToolsView({ session, showToast }: ToolsViewProps) {
 
       // Fetch current books from AT Protocol
       const response = await fetch("/api/books", {
-        headers: {
-          "X-Session-Data": btoa(JSON.stringify(session)),
-        },
+        credentials: "include", // Include cookies for authentication
       });
 
       if (!response.ok) {
@@ -1110,8 +1092,8 @@ function ToolsView({ session, showToast }: ToolsViewProps) {
               method: "PUT",
               headers: {
                 "Content-Type": "application/json",
-                "X-Session-Data": btoa(JSON.stringify(session)),
               },
+              credentials: "include", // Include cookies for authentication
               body: JSON.stringify({ status: "buzz.bookhive.defs#finished" }),
             },
           );
